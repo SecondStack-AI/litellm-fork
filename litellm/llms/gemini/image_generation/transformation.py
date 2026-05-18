@@ -1,9 +1,13 @@
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 
 from litellm.llms.base_llm.image_generation.transformation import (
     BaseImageGenerationConfig,
+)
+from litellm.llms.gemini.common_utils import (
+    map_openai_size_to_gemini_image_config,
+    supports_gemini_image_size,
 )
 from litellm.secret_managers.main import get_secret_str
 from litellm.types.llms.gemini import GeminiImageGenerationRequest
@@ -36,7 +40,7 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
         Google AI Imagen API supported parameters
         https://ai.google.dev/gemini-api/docs/imagen
         """
-        return ["n", "size"]
+        return ["n", "size", "imageConfig"]  # type: ignore[list-item]
 
     def map_openai_params(
         self,
@@ -55,8 +59,11 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
                     if k == "n":
                         mapped_params["sampleCount"] = v
                     elif k == "size":
-                        # Map OpenAI size format to Google aspectRatio
-                        mapped_params["aspectRatio"] = self._map_size_to_aspect_ratio(v)
+                        image_config = map_openai_size_to_gemini_image_config(v, model)
+                        if image_config is not None:
+                            mapped_params["imageConfig"] = image_config
+                    elif k == "imageConfig":
+                        mapped_params["imageConfig"] = v
                     else:
                         mapped_params[k] = v
         return mapped_params
@@ -73,7 +80,10 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
             "1280x896": "4:3",
             "896x1280": "3:4",
         }
-        return aspect_ratio_map.get(size, "1:1")
+        image_config = map_openai_size_to_gemini_image_config(size, model="")
+        if image_config is None:
+            return "1:1"
+        return aspect_ratio_map.get(size, image_config["aspectRatio"])
 
     def _transform_image_usage(self, usage_metadata: dict) -> ImageUsage:
         """
@@ -180,9 +190,23 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
         """
         # For Gemini Flash Image Preview models, use standard Gemini format
         if "gemini" in model:
+            generation_config: Dict[str, Any] = {
+                "response_modalities": ["IMAGE", "TEXT"]
+            }
+            image_config: Dict[str, Any] = {}
+
+            if isinstance(optional_params.get("imageConfig"), dict):
+                image_config.update(optional_params["imageConfig"])
+
+            if not supports_gemini_image_size(model):
+                image_config.pop("imageSize", None)
+
+            if image_config:
+                generation_config["imageConfig"] = image_config
+
             request_body: dict = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"response_modalities": ["IMAGE", "TEXT"]},
+                "generationConfig": generation_config,
             }
             return request_body
         else:

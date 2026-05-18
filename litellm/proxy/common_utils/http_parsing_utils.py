@@ -39,8 +39,11 @@ async def _read_request_body(request: Optional[Request]) -> Dict:
 
         if "form" in content_type:
             parsed_body = dict(await request.form())
-            if "metadata" in parsed_body and isinstance(parsed_body["metadata"], str):
-                parsed_body["metadata"] = json.loads(parsed_body["metadata"])
+            for json_field in ("metadata", "imageConfig"):
+                if json_field in parsed_body and isinstance(
+                    parsed_body[json_field], str
+                ):
+                    parsed_body[json_field] = json.loads(parsed_body[json_field])
         else:
             # Read the request body
             body = await request.body()
