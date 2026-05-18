@@ -5,6 +5,10 @@ import httpx
 from litellm.llms.base_llm.image_generation.transformation import (
     BaseImageGenerationConfig,
 )
+from litellm.llms.gemini.common_utils import (
+    map_openai_size_to_gemini_image_config,
+    supports_gemini_image_size,
+)
 from litellm.secret_managers.main import get_secret_str
 from litellm.types.llms.gemini import GeminiImageGenerationRequest
 from litellm.types.llms.openai import (
@@ -36,7 +40,7 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
         Google AI Imagen API supported parameters
         https://ai.google.dev/gemini-api/docs/imagen
         """
-        return ["n", "size"]
+        return ["n", "size", "imageConfig"]  # type: ignore[list-item]
 
     def map_openai_params(
         self,
@@ -55,10 +59,11 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
                     if k == "n":
                         mapped_params["sampleCount"] = v
                     elif k == "size":
-                        image_config = self._map_size_to_image_config(v, model)
-                        mapped_params["aspectRatio"] = image_config["aspectRatio"]
-                        if "imageSize" in image_config:
-                            mapped_params["imageSize"] = image_config["imageSize"]
+                        image_config = map_openai_size_to_gemini_image_config(v, model)
+                        if image_config is not None:
+                            mapped_params["imageConfig"] = image_config
+                    elif k == "imageConfig":
+                        mapped_params["imageConfig"] = v
                     else:
                         mapped_params[k] = v
         return mapped_params
@@ -75,103 +80,10 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
             "1280x896": "4:3",
             "896x1280": "3:4",
         }
-        if size in aspect_ratio_map:
-            return aspect_ratio_map[size]
-
-        return self._map_size_to_image_config(size, model="")["aspectRatio"]
-
-    def _map_size_to_image_config(self, size: str, model: str) -> Dict[str, str]:
-        dimensions = self._parse_size(size)
-        if dimensions is None:
-            image_config = {"aspectRatio": "1:1"}
-            if self._supports_image_size(model):
-                image_config["imageSize"] = "1K"
-            return image_config
-
-        width, height = dimensions
-        image_config = {
-            "aspectRatio": self._map_dimensions_to_aspect_ratio(width, height),
-        }
-        if self._supports_image_size(model):
-            image_config["imageSize"] = self._map_dimensions_to_image_size(
-                width, height
-            )
-        return image_config
-
-    def _parse_size(self, size: str) -> Optional[tuple[int, int]]:
-        if size == "auto":
-            return None
-
-        width_str, separator, height_str = size.lower().partition("x")
-        if not separator:
-            return None
-
-        try:
-            width = int(width_str)
-            height = int(height_str)
-        except ValueError:
-            return None
-
-        if width <= 0 or height <= 0:
-            return None
-
-        return width, height
-
-    def _map_dimensions_to_aspect_ratio(self, width: int, height: int) -> str:
-        supported_ratios = {
-            "1:1": 1 / 1,
-            "1:4": 1 / 4,
-            "1:8": 1 / 8,
-            "2:3": 2 / 3,
-            "3:2": 3 / 2,
-            "3:4": 3 / 4,
-            "4:1": 4 / 1,
-            "4:3": 4 / 3,
-            "4:5": 4 / 5,
-            "5:4": 5 / 4,
-            "8:1": 8 / 1,
-            "9:16": 9 / 16,
-            "16:9": 16 / 9,
-            "21:9": 21 / 9,
-        }
-        requested_ratio = width / height
-        return min(
-            supported_ratios,
-            key=lambda aspect_ratio: abs(
-                supported_ratios[aspect_ratio] - requested_ratio
-            ),
-        )
-
-    def _map_dimensions_to_image_size(self, width: int, height: int) -> str:
-        effective_square_side = (width * height) ** 0.5
-        if effective_square_side < 768:
-            return "512"
-        if effective_square_side < 1536:
-            return "1K"
-        if effective_square_side < 3072:
-            return "2K"
-        return "4K"
-
-    def _supports_image_size(self, model: str) -> bool:
-        return "2.5-flash" not in model
-
-    def _normalize_image_config(self, image_config: Dict[str, Any]) -> Dict[str, Any]:
-        normalized: Dict[str, Any] = {}
-        for key, value in image_config.items():
-            if key == "aspect_ratio":
-                normalized["aspectRatio"] = value
-            elif key == "image_size":
-                normalized["imageSize"] = self._normalize_image_size(value)
-            elif key == "imageSize":
-                normalized[key] = self._normalize_image_size(value)
-            else:
-                normalized[key] = value
-        return normalized
-
-    def _normalize_image_size(self, image_size: Any) -> Any:
-        if isinstance(image_size, str) and image_size.lower().endswith("k"):
-            return image_size.upper()
-        return image_size
+        image_config = map_openai_size_to_gemini_image_config(size, model="")
+        if image_config is None:
+            return "1:1"
+        return aspect_ratio_map.get(size, image_config["aspectRatio"])
 
     def _transform_image_usage(self, usage_metadata: dict) -> ImageUsage:
         """
@@ -283,25 +195,10 @@ class GoogleImageGenConfig(BaseImageGenerationConfig):
             }
             image_config: Dict[str, Any] = {}
 
-            if "imageConfig" in optional_params and isinstance(
-                optional_params["imageConfig"], dict
-            ):
-                image_config.update(
-                    self._normalize_image_config(optional_params["imageConfig"])
-                )
-            elif "image_config" in optional_params and isinstance(
-                optional_params["image_config"], dict
-            ):
-                image_config.update(
-                    self._normalize_image_config(optional_params["image_config"])
-                )
+            if isinstance(optional_params.get("imageConfig"), dict):
+                image_config.update(optional_params["imageConfig"])
 
-            if "aspectRatio" in optional_params:
-                image_config["aspectRatio"] = optional_params["aspectRatio"]
-            if "imageSize" in optional_params:
-                image_config["imageSize"] = optional_params["imageSize"]
-
-            if not self._supports_image_size(model):
+            if not supports_gemini_image_size(model):
                 image_config.pop("imageSize", None)
 
             if image_config:
