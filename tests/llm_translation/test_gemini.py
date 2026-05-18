@@ -365,6 +365,78 @@ def test_gemini_flash_image_preview_models(model_name: str):
         ]
 
 
+@pytest.mark.parametrize(
+    "model, kwargs, expected_image_config",
+    [
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"size": "1024x1792"},
+            {"aspectRatio": "9:16", "imageSize": "1K"},
+        ),
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"size": "1536x1024"},
+            {"aspectRatio": "3:2", "imageSize": "1K"},
+        ),
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"size": "2048x2048"},
+            {"aspectRatio": "1:1", "imageSize": "2K"},
+        ),
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"size": "512x512"},
+            {"aspectRatio": "1:1", "imageSize": "512"},
+        ),
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"image_config": {"aspect_ratio": "9:16", "image_size": "1k"}},
+            {"aspectRatio": "9:16", "imageSize": "1K"},
+        ),
+        (
+            "gemini/gemini-3-pro-image-preview",
+            {"image_config": {"aspectRatio": "16:9", "imageSize": "2K"}},
+            {"aspectRatio": "16:9", "imageSize": "2K"},
+        ),
+        (
+            "gemini/gemini-2.5-flash-image",
+            {"size": "2048x2048"},
+            {"aspectRatio": "1:1"},
+        ),
+    ],
+)
+def test_gemini_image_generation_forwards_image_config(
+    model: str, kwargs: dict, expected_image_config: dict
+):
+    from unittest.mock import patch, MagicMock
+
+    with patch(
+        "litellm.llms.custom_httpx.llm_http_handler.HTTPHandler.post"
+    ) as mock_post:
+        mock_http_response = MagicMock()
+        mock_http_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"inlineData": {"data": "test_base64_image_data"}}]
+                    }
+                }
+            ]
+        }
+        mock_http_response.status_code = 200
+        mock_post.return_value = mock_http_response
+
+        litellm.image_generation(
+            model=model,
+            prompt="Generate a simple test image",
+            api_key="test_api_key",
+            **kwargs,
+        )
+
+        request_data = mock_post.call_args.kwargs.get("json", {})
+        assert request_data["generationConfig"]["imageConfig"] == expected_image_config
+
+
 def test_gemini_imagen_models_use_predict_endpoint():
     """
     Test that Imagen models still use :predict endpoint (not broken by gemini-2.5-flash-image-preview fix)
