@@ -91,7 +91,8 @@ COPY --from=builder /app /app
 COPY --from=builder /root/.cache /root/.cache
 
 RUN find /app/.venv -type f -path "*/tornado/test/*" -delete && \
-    find /app/.venv -type d -path "*/tornado/test" -delete
+    find /app/.venv -type d -path "*/tornado/test" -delete && \
+    rm -rf /root/.cache/uv
 
 EXPOSE 4000/tcp
 
