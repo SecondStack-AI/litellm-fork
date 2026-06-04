@@ -233,6 +233,7 @@ class GenerationConfig(TypedDict, total=False):
     response_mime_type: Literal["text/plain", "application/json"]
     response_schema: dict
     response_json_schema: dict
+    responseFormat: dict
     seed: int
     responseLogprobs: bool
     logprobs: int

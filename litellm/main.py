@@ -422,6 +422,7 @@ async def acompletion(  # noqa: PLR0915
     # Optional liteLLM function params
     thinking: Optional[AnthropicThinkingParam] = None,
     web_search_options: Optional[OpenAIWebSearchOptions] = None,
+    include_server_side_tool_invocations: Optional[bool] = None,
     # Session management
     shared_session: Optional["ClientSession"] = None,
     # Per-request JSON schema validation (overrides litellm.enable_json_schema_validation)
@@ -569,6 +570,7 @@ async def acompletion(  # noqa: PLR0915
         "acompletion": True,  # assuming this is a required parameter
         "thinking": thinking,
         "web_search_options": web_search_options,
+        "include_server_side_tool_invocations": include_server_side_tool_invocations,
         "shared_session": shared_session,
         "enable_json_schema_validation": enable_json_schema_validation,
     }
@@ -1090,6 +1092,7 @@ def completion(  # type: ignore # noqa: PLR0915
     top_logprobs: Optional[int] = None,
     parallel_tool_calls: Optional[bool] = None,
     web_search_options: Optional[OpenAIWebSearchOptions] = None,
+    include_server_side_tool_invocations: Optional[bool] = None,
     deployment_id=None,
     extra_headers: Optional[dict] = None,
     safety_identifier: Optional[str] = None,
@@ -1518,6 +1521,11 @@ def completion(  # type: ignore # noqa: PLR0915
             "reasoning_effort": reasoning_effort,
             "thinking": thinking,
             "web_search_options": web_search_options,
+            "include_server_side_tool_invocations": (
+                include_server_side_tool_invocations
+                if include_server_side_tool_invocations is not None
+                else kwargs.get("include_server_side_tool_invocations")
+            ),
             "safety_identifier": safety_identifier,
             "service_tier": service_tier,
             "allowed_openai_params": kwargs.get("allowed_openai_params"),
