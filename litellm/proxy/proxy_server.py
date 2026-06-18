@@ -1963,6 +1963,32 @@ async def _init_and_increment_spend_counter(
     await spend_counter_cache.async_increment_cache(key=counter_key, value=increment)
 
 
+async def set_spend_counter(counter_key: str, value: float) -> None:
+    """
+    Overwrite the cross-pod spend counter to an absolute value (in-memory + Redis).
+
+    Used when an authoritative spend mutation happens outside the per-request
+    increment path (e.g. a management update endpoint sets `spend` directly) so
+    that `get_current_spend` reflects it immediately on a warm counter instead of
+    waiting for a reseed that never happens while traffic continues. Mirrors the
+    dual-write done by the budget reset job.
+
+    In-memory is set before Redis; if the Redis write fails this pod is correct
+    but other pods keep the stale counter until their next reseed (the same
+    caveat the reset job carries).
+    """
+    spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=value)
+    if spend_counter_cache.redis_cache is not None:
+        try:
+            await spend_counter_cache.redis_cache.async_set_cache(
+                key=counter_key, value=value
+            )
+        except Exception as e:
+            verbose_proxy_logger.warning(
+                "Failed to set spend counter %s in Redis: %s", counter_key, e
+            )
+
+
 async def update_cache(  # noqa: PLR0915
     token: Optional[str],
     user_id: Optional[str],

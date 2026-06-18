@@ -1127,7 +1127,11 @@ async def _update_single_user_helper(
 
     Returns the updated user data or raises an exception on failure.
     """
-    from litellm.proxy.proxy_server import litellm_proxy_admin_name, prisma_client
+    from litellm.proxy.proxy_server import (
+        litellm_proxy_admin_name,
+        prisma_client,
+        set_spend_counter,
+    )
 
     if prisma_client is None:
         raise Exception("Not connected to DB!")
@@ -1249,6 +1253,14 @@ async def _update_single_user_helper(
             response = await prisma_client.insert_data(
                 data=non_default_values, table_name="user"
             )
+
+    # A direct `spend` change must also overwrite the cross-pod spend counter
+    # that enforcement reads; the DB write alone never reaches a warm counter.
+    if response is not None and non_default_values.get("spend") is not None:
+        await set_spend_counter(
+            counter_key=f"spend:user:{response['user_id']}",
+            value=non_default_values["spend"],
+        )
 
     # Create audit log for successful update
     if response is not None:

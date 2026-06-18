@@ -2303,6 +2303,7 @@ async def update_key_fn(  # noqa: PLR0915
         premium_user,
         prisma_client,
         proxy_logging_obj,
+        set_spend_counter,
         user_api_key_cache,
         user_custom_key_update,
     )
@@ -2386,6 +2387,14 @@ async def update_key_fn(  # noqa: PLR0915
             user_api_key_cache=user_api_key_cache,
             proxy_logging_obj=proxy_logging_obj,
         )
+
+        # A direct `spend` change must also overwrite the cross-pod spend counter
+        # that enforcement reads; the DB write alone never reaches a warm counter.
+        if non_default_values.get("spend") is not None:
+            await set_spend_counter(
+                counter_key=f"spend:key:{_hash_token_if_needed(key)}",
+                value=non_default_values["spend"],
+            )
 
         asyncio.create_task(
             KeyManagementEventHooks.async_key_updated_hook(
