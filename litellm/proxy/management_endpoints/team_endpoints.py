@@ -2631,7 +2631,11 @@ async def team_member_update(
 
     Update team member budgets and team member role
     """
-    from litellm.proxy.proxy_server import premium_user, prisma_client
+    from litellm.proxy.proxy_server import (
+        premium_user,
+        prisma_client,
+        set_spend_counter,
+    )
 
     if prisma_client is None:
         raise HTTPException(status_code=500, detail={"error": "No db connected"})
@@ -2724,19 +2728,32 @@ async def team_member_update(
             team_default_budget_id = raw_default_budget_id
 
     ### upsert new budget
-    async with prisma_client.db.tx() as tx:
-        await _upsert_budget_and_membership(
-            tx=tx,
-            team_id=data.team_id,
-            user_id=received_user_id,
-            max_budget=data.max_budget_in_team,
-            existing_budget_id=identified_budget_id,
-            user_api_key_dict=user_api_key_dict,
-            tpm_limit=data.tpm_limit,
-            rpm_limit=data.rpm_limit,
-            allowed_models=data.allowed_models,
-            team_default_budget_id=team_default_budget_id,
+    # Only touch the member budget when a budget/limit field is actually provided.
+    # _upsert_budget_and_membership disconnects the member's budget when all of
+    # max_budget/tpm/rpm/allowed_models are None, so calling it unconditionally
+    # would wipe the budget on a spend-only (or role-only) update.
+    if any(
+        x is not None
+        for x in (
+            data.max_budget_in_team,
+            data.tpm_limit,
+            data.rpm_limit,
+            data.allowed_models,
         )
+    ):
+        async with prisma_client.db.tx() as tx:
+            await _upsert_budget_and_membership(
+                tx=tx,
+                team_id=data.team_id,
+                user_id=received_user_id,
+                max_budget=data.max_budget_in_team,
+                existing_budget_id=identified_budget_id,
+                user_api_key_dict=user_api_key_dict,
+                tpm_limit=data.tpm_limit,
+                rpm_limit=data.rpm_limit,
+                allowed_models=data.allowed_models,
+                team_default_budget_id=team_default_budget_id,
+            )
 
     ### update team member role
     if data.role is not None:
@@ -2761,11 +2778,32 @@ async def team_member_update(
             data={"members_with_roles": json.dumps(_db_team_members)},  # type: ignore
         )
 
+    ### set member spend
+    # Write the membership row, then overwrite the cross-pod spend counter that
+    # enforcement reads — the DB write alone never reaches a warm counter. A
+    # negative spend is allowed and represents extra headroom (a credit) for the
+    # current budget period, consistent with /key/update and /user/update.
+    if data.spend is not None:
+        await prisma_client.db.litellm_teammembership.update(
+            where={
+                "user_id_team_id": {
+                    "user_id": received_user_id,
+                    "team_id": data.team_id,
+                }
+            },
+            data={"spend": data.spend},
+        )
+        await set_spend_counter(
+            counter_key=f"spend:team_member:{received_user_id}:{data.team_id}",
+            value=data.spend,
+        )
+
     return TeamMemberUpdateResponse(
         team_id=data.team_id,
         user_id=received_user_id,
         user_email=data.user_email,
         max_budget_in_team=data.max_budget_in_team,
+        spend=data.spend,
         tpm_limit=data.tpm_limit,
         rpm_limit=data.rpm_limit,
         allowed_models=data.allowed_models,
