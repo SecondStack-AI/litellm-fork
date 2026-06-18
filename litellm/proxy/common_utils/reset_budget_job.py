@@ -725,6 +725,12 @@ class ResetBudgetJob:
                 and item.team_id is not None  # type: ignore[union-attr]
             ):
                 counter_key = f"spend:team:{item.team_id}"  # type: ignore[union-attr]
+            elif (
+                item_type == "user"
+                and hasattr(item, "user_id")
+                and item.user_id is not None  # type: ignore[union-attr]
+            ):
+                counter_key = f"spend:user:{item.user_id}"  # type: ignore[union-attr]
 
             if counter_key is not None:
                 # Always reset in-memory (local fallback)

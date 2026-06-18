@@ -1049,3 +1049,77 @@ def test_reset_budget_windows_query_error_does_not_break_team_path(monkeypatch):
     asyncio.run(job.reset_budget_windows())  # must not raise
 
     prisma_client.db.litellm_teamtable.update.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _reset_budget_common cross-pod counter reset (per entity type)
+# ---------------------------------------------------------------------------
+
+
+def _fake_spend_counter_cache(monkeypatch):
+    """Inject a fake `litellm.proxy.proxy_server` exposing a stub
+    `spend_counter_cache`, so the in-function import in `_reset_budget_common`
+    resolves without importing the real (heavy) proxy module."""
+    spend_counter_cache = MagicMock()
+    spend_counter_cache.in_memory_cache.set_cache = MagicMock()
+    spend_counter_cache.redis_cache = None  # skip the async redis branch
+    fake_module = types.ModuleType("litellm.proxy.proxy_server")
+    fake_module.spend_counter_cache = spend_counter_cache
+    monkeypatch.setitem(sys.modules, "litellm.proxy.proxy_server", fake_module)
+    return spend_counter_cache
+
+
+def test_reset_budget_common_clears_user_counter(monkeypatch):
+    """A user budget reset must clear the cross-pod spend counter
+    `spend:user:{user_id}` (not only the DB row), mirroring the key/team
+    branches. Without the user branch a warm Redis counter over-enforces
+    indefinitely after a reset and a user-level negative-spend grant never
+    expires."""
+    spend_counter_cache = _fake_spend_counter_cache(monkeypatch)
+    now = datetime.now(timezone.utc)
+    user = type(
+        "LiteLLM_UserTable",
+        (),
+        {
+            "spend": 200.0,
+            "budget_duration": "7d",
+            "budget_reset_at": now,
+            "user_id": "user-123",
+        },
+    )
+
+    asyncio.run(
+        ResetBudgetJob._reset_budget_common(
+            item=user, current_time=now, item_type="user"
+        )
+    )
+
+    assert user.spend == 0.0
+    spend_counter_cache.in_memory_cache.set_cache.assert_any_call(
+        key="spend:user:user-123", value=0.0
+    )
+
+
+def test_reset_budget_common_clears_key_counter(monkeypatch):
+    """Regression guard: the existing key branch still clears
+    `spend:key:{token}` on reset."""
+    spend_counter_cache = _fake_spend_counter_cache(monkeypatch)
+    now = datetime.now(timezone.utc)
+    key = type(
+        "LiteLLM_VerificationToken",
+        (),
+        {
+            "spend": 100.0,
+            "budget_duration": "30d",
+            "budget_reset_at": now,
+            "token": "hashed-token-abc",
+        },
+    )
+
+    asyncio.run(
+        ResetBudgetJob._reset_budget_common(item=key, current_time=now, item_type="key")
+    )
+
+    spend_counter_cache.in_memory_cache.set_cache.assert_any_call(
+        key="spend:key:hashed-token-abc", value=0.0
+    )
