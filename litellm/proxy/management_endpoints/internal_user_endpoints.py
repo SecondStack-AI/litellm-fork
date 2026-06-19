@@ -35,6 +35,7 @@ from litellm.proxy.management_endpoints.common_daily_activity import (
 from litellm.proxy.management_endpoints.common_utils import (
     _is_user_team_admin,
     _user_has_admin_view,
+    validate_finite_spend,
 )
 from litellm.proxy.management_endpoints.key_management_endpoints import (
     generate_key_helper_fn,
@@ -1157,6 +1158,8 @@ async def _update_single_user_helper(
     non_default_values = _update_internal_user_params(
         data_json=data_json, data=user_request
     )
+
+    validate_finite_spend(non_default_values.get("spend"))
 
     _hash_password_in_dict(non_default_values)
 

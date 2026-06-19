@@ -79,6 +79,7 @@ from litellm.proxy.management_endpoints.common_utils import (
     _update_metadata_fields,
     _upsert_budget_and_membership,
     _user_has_admin_view,
+    validate_finite_spend,
 )
 from litellm.proxy.management_endpoints.organization_endpoints import (
     add_member_to_organization,
@@ -2640,6 +2641,11 @@ async def team_member_update(
     if prisma_client is None:
         raise HTTPException(status_code=500, detail={"error": "No db connected"})
 
+    # Validate spend up front so a non-finite value is rejected before the budget
+    # upsert runs — otherwise a valid budget change would be applied and then a
+    # 400 raised on spend, leaving a partial update.
+    validate_finite_spend(data.spend)
+
     if data.team_id is None:
         raise HTTPException(status_code=400, detail={"error": "No team id passed in"})
 
@@ -2784,14 +2790,25 @@ async def team_member_update(
     # negative spend is allowed and represents extra headroom (a credit) for the
     # current budget period, consistent with /key/update and /user/update.
     if data.spend is not None:
-        await prisma_client.db.litellm_teammembership.update(
+        # upsert (not update): a member listed in members_with_roles may not yet
+        # have a LiteLLM_TeamMembership row — it is only created on a budget upsert.
+        # A plain update would raise P2025 "Record to update not found"; upsert
+        # creates a minimal row so a spend-only grant still applies.
+        await prisma_client.db.litellm_teammembership.upsert(
             where={
                 "user_id_team_id": {
                     "user_id": received_user_id,
                     "team_id": data.team_id,
                 }
             },
-            data={"spend": data.spend},
+            data={
+                "create": {
+                    "user_id": received_user_id,
+                    "team_id": data.team_id,
+                    "spend": data.spend,
+                },
+                "update": {"spend": data.spend},
+            },
         )
         await set_spend_counter(
             counter_key=f"spend:team_member:{received_user_id}:{data.team_id}",

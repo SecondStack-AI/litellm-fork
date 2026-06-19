@@ -1,4 +1,7 @@
+import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+
+from fastapi import HTTPException
 
 from litellm._logging import verbose_proxy_logger
 from litellm.caching import DualCache
@@ -20,6 +23,18 @@ from litellm.proxy.utils import _premium_user_check
 if TYPE_CHECKING:
     from litellm.proxy._types import NewProjectRequest, UpdateProjectRequest
     from litellm.proxy.utils import PrismaClient, ProxyLogging
+
+
+def validate_finite_spend(spend: Optional[float]) -> None:
+    """Reject a non-finite spend value (NaN / +/-Infinity) before it is persisted
+    or written to the spend counter. A non-finite spend silently defeats budget
+    enforcement: ``spend >= max_budget`` is False for NaN and for -inf, so the
+    entity would never be blocked."""
+    if spend is not None and not math.isfinite(spend):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Invalid spend value: spend must be a finite number."},
+        )
 
 
 def _user_has_admin_view(user_api_key_dict: UserAPIKeyAuth) -> bool:

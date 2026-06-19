@@ -56,6 +56,7 @@ from litellm.proxy.management_endpoints.common_utils import (
     _is_user_org_admin_for_team,
     _is_user_team_admin,
     _set_object_metadata_field,
+    validate_finite_spend,
 )
 from litellm.proxy.management_endpoints.model_management_endpoints import (
     _add_model_to_db,
@@ -2375,6 +2376,8 @@ async def update_key_fn(  # noqa: PLR0915
             existing_key_alias=existing_key_row.key_alias,
         )
 
+        validate_finite_spend(non_default_values.get("spend"))
+
         _data = {**non_default_values, "token": key}
         if prisma_client is None:
             raise Exception("Not connected to DB!")
@@ -2390,7 +2393,9 @@ async def update_key_fn(  # noqa: PLR0915
 
         # A direct `spend` change must also overwrite the cross-pod spend counter
         # that enforcement reads; the DB write alone never reaches a warm counter.
-        if non_default_values.get("spend") is not None:
+        # Guard on `response` so a failed DB write never overwrites the counter
+        # (mirrors the guard in _update_single_user_helper).
+        if response is not None and non_default_values.get("spend") is not None:
             await set_spend_counter(
                 counter_key=f"spend:key:{_hash_token_if_needed(key)}",
                 value=non_default_values["spend"],

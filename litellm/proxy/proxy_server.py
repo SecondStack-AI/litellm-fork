@@ -1975,9 +1975,16 @@ async def set_spend_counter(counter_key: str, value: float) -> None:
 
     In-memory is set before Redis; if the Redis write fails this pod is correct
     but other pods keep the stale counter until their next reseed (the same
-    caveat the reset job carries).
+    caveat the reset job carries). Both writes are best-effort: the DB row is
+    already authoritative, so a cache failure must not surface as a 500 — the
+    counter self-heals on its next reseed.
     """
-    spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=value)
+    try:
+        spend_counter_cache.in_memory_cache.set_cache(key=counter_key, value=value)
+    except Exception as e:
+        verbose_proxy_logger.warning(
+            "Failed to set in-memory spend counter %s: %s", counter_key, e
+        )
     if spend_counter_cache.redis_cache is not None:
         try:
             await spend_counter_cache.redis_cache.async_set_cache(
