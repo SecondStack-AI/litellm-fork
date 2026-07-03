@@ -58,6 +58,28 @@ RUN uv sync --frozen --no-default-groups --no-editable \
     --extra semantic-router \
     --python python3
 
+RUN uv pip install --python /app/.venv/bin/python --no-cache --upgrade --no-deps \
+    PyJWT==2.13.0 \
+    python-multipart==0.0.30 \
+    cryptography==48.0.1 \
+    semantic-router==0.1.15 \
+    tornado==6.5.6 && \
+    /app/.venv/bin/python - <<'PY'
+import importlib.metadata as metadata
+
+expected = {
+    "PyJWT": "2.13.0",
+    "python-multipart": "0.0.30",
+    "cryptography": "48.0.1",
+    "semantic-router": "0.1.15",
+    "tornado": "6.5.6",
+}
+for package, version in expected.items():
+    installed = metadata.version(package)
+    if installed != version:
+        raise SystemExit(f"{package} expected {version}, got {installed}")
+PY
+
 RUN prisma generate --schema=./schema.prisma
 
 RUN sed -i 's/\r$//' docker/entrypoint.sh && chmod +x docker/entrypoint.sh && \
@@ -69,9 +91,9 @@ FROM $LITELLM_RUNTIME_IMAGE AS runtime
 USER root
 
 RUN apk add --no-cache bash openssl tzdata nodejs npm python3 libsndfile supervisor && \
-    npm install -g npm@11.12.1 tar@7.5.11 glob@13.0.6 @isaacs/brace-expansion@5.0.1 brace-expansion@5.0.5 minimatch@10.2.4 diff@8.0.3 picomatch@4.0.4 && \
+    npm install -g npm@11.17.0 tar@7.5.11 glob@13.0.6 @isaacs/brace-expansion@5.0.1 brace-expansion@5.0.5 minimatch@10.2.4 diff@8.0.3 picomatch@4.0.4 undici@6.27.0 && \
     GLOBAL="$(npm root -g)" && \
-    for pkg in tar glob @isaacs/brace-expansion brace-expansion minimatch diff picomatch; do \
+    for pkg in tar glob @isaacs/brace-expansion brace-expansion minimatch diff picomatch undici; do \
         name="${pkg##*/}"; \
         find "$GLOBAL/npm" -type d -name "$name" -path "*/node_modules/$pkg" | while read d; do \
             rm -rf "$d" && cp -rL "$GLOBAL/$pkg" "$d"; \
