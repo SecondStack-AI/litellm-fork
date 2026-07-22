@@ -1051,6 +1051,9 @@ OpenAIAudioTranscriptionOptionalParams = Literal[
     "response_format",
     "timestamp_granularities",
     "include",
+    "chunking_strategy",
+    "known_speaker_names",
+    "known_speaker_references",
 ]
 
 

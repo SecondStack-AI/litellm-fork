@@ -667,8 +667,14 @@ OPENAI_CHAT_COMPLETION_PARAMS = [
 
 OPENAI_TRANSCRIPTION_PARAMS = [
     "language",
+    "prompt",
     "response_format",
     "timestamp_granularities",
+    "temperature",
+    "include",
+    "chunking_strategy",
+    "known_speaker_names",
+    "known_speaker_references",
 ]
 
 OPENAI_EMBEDDING_PARAMS = ["dimensions", "encoding_format", "user"]

@@ -2419,15 +2419,22 @@ class TranscriptionUsageTokensObject(BaseModel):
 
 class TranscriptionResponse(OpenAIObject):
     text: Optional[str] = None
+    language: Optional[str] = None
+    duration: Optional[float] = None
+    segments: Optional[List[Dict[str, Any]]] = None
     usage: Optional[
-        Union[TranscriptionUsageDurationObject, TranscriptionUsageTokensObject]
+        Union[
+            TranscriptionUsageDurationObject,
+            TranscriptionUsageTokensObject,
+            Dict[str, Any],
+        ]
     ] = None
 
     _hidden_params: dict = {}
     _response_headers: Optional[dict] = None
 
-    def __init__(self, text=None):
-        super().__init__(text=text)  # type: ignore
+    def __init__(self, text=None, **kwargs):
+        super().__init__(text=text, **kwargs)  # type: ignore
 
     def __contains__(self, key):
         # Define custom behavior for the 'in' operator

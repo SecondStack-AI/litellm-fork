@@ -151,9 +151,23 @@ class MistralAudioTranscriptionConfig(BaseAudioTranscriptionConfig):
 
         # Preserve Mistral-specific fields (e.g. diarization segments)
         if "segments" in response_json:
-            response["segments"] = response_json["segments"]
+            response["segments"] = [
+                {
+                    **{
+                        key: value
+                        for key, value in segment.items()
+                        if key != "speaker_id"
+                    },
+                    "speaker": segment.get("speaker") or segment.get("speaker_id"),
+                }
+                for segment in response_json["segments"]
+            ]
         if "language" in response_json:
             response["language"] = response_json["language"]
+        if "duration" in response_json:
+            response["duration"] = response_json["duration"]
+        if "usage" in response_json:
+            response["usage"] = response_json["usage"]
 
         response._hidden_params = response_json
         return response

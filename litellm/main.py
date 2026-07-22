@@ -6437,10 +6437,14 @@ def transcription(
     language: Optional[str] = None,
     prompt: Optional[str] = None,
     response_format: Optional[
-        Literal["json", "text", "srt", "verbose_json", "vtt"]
+        Literal["json", "text", "srt", "verbose_json", "vtt", "diarized_json"]
     ] = None,
     timestamp_granularities: Optional[List[Literal["word", "segment"]]] = None,
     temperature: Optional[int] = None,  # openai defaults this to 0
+    include: Optional[List[str]] = None,
+    chunking_strategy: Optional[Union[str, dict]] = None,
+    known_speaker_names: Optional[List[str]] = None,
+    known_speaker_references: Optional[List[str]] = None,
     ## LITELLM PARAMS ##
     user: Optional[str] = None,
     timeout=600,  # default to 10 minutes
@@ -6501,6 +6505,10 @@ def transcription(
         response_format=response_format,
         timestamp_granularities=timestamp_granularities,
         temperature=temperature,
+        include=include,
+        chunking_strategy=chunking_strategy,
+        known_speaker_names=known_speaker_names,
+        known_speaker_references=known_speaker_references,
         custom_llm_provider=custom_llm_provider,
         **non_default_params,
     )

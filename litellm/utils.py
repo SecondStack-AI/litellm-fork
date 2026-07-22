@@ -2985,6 +2985,10 @@ def get_optional_params_transcription(
     response_format: Optional[str] = None,
     temperature: Optional[int] = None,
     timestamp_granularities: Optional[List[Literal["word", "segment"]]] = None,
+    include: Optional[List[str]] = None,
+    chunking_strategy: Optional[Union[str, dict]] = None,
+    known_speaker_names: Optional[List[str]] = None,
+    known_speaker_references: Optional[List[str]] = None,
     drop_params: Optional[bool] = None,
     **kwargs,
 ):
@@ -2994,6 +2998,7 @@ def get_optional_params_transcription(
     passed_params = locals()
 
     passed_params.pop("OPENAI_TRANSCRIPTION_PARAMS")
+    passed_params.pop("model")
     custom_llm_provider = passed_params.pop("custom_llm_provider")
     drop_params = passed_params.pop("drop_params")
     special_params = passed_params.pop("kwargs")
@@ -3006,6 +3011,10 @@ def get_optional_params_transcription(
         "response_format": None,
         "temperature": None,  # openai defaults this to 0
         "timestamp_granularities": None,
+        "include": None,
+        "chunking_strategy": None,
+        "known_speaker_names": None,
+        "known_speaker_references": None,
     }
 
     non_default_params = {

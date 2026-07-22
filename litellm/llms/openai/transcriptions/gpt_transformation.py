@@ -22,6 +22,9 @@ class OpenAIGPTAudioTranscriptionConfig(OpenAIWhisperAudioTranscriptionConfig):
             "response_format",
             "temperature",
             "include",
+            "chunking_strategy",
+            "known_speaker_names",
+            "known_speaker_references",
         ]
 
     def transform_audio_transcription_request(

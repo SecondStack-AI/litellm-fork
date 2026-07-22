@@ -173,6 +173,7 @@ def test_mistral_audio_transcription_response_transform_diarized():
         "model": "voxtral-mini-latest",
         "text": "Hello, how are you? I am fine.",
         "language": None,
+        "duration": 4.0,
         "segments": [
             {
                 "text": "Hello, how are you?",
@@ -203,9 +204,12 @@ def test_mistral_audio_transcription_response_transform_diarized():
     assert response.text == "Hello, how are you? I am fine."
     assert response["segments"] is not None
     assert len(response["segments"]) == 2
-    assert response["segments"][0]["speaker_id"] == "speaker_1"
-    assert response["segments"][1]["speaker_id"] == "speaker_2"
+    assert response["segments"][0]["speaker"] == "speaker_1"
+    assert response["segments"][1]["speaker"] == "speaker_2"
+    assert "speaker_id" not in response["segments"][0]
     assert response["language"] is None
+    assert response["duration"] == 4.0
+    assert response["usage"]["total_tokens"] == 50
 
 
 def test_mistral_audio_transcription_response_transform_empty():
