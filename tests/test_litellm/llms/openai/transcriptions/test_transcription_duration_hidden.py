@@ -7,7 +7,11 @@ deserialization" into thinking a plain Transcription is a
 TranscriptionVerbose/Diarized type.
 """
 
+import io
 from unittest.mock import patch
+
+import litellm
+import pytest
 
 from litellm.cost_calculator import completion_cost
 from litellm.litellm_core_utils.llm_response_utils.convert_dict_to_response import (
@@ -77,6 +81,45 @@ class TestTranscriptionDurationNotInResponseBody:
         duration = getattr(result, "duration", None)
         assert duration is None
 
+    @patch("litellm.main.calculate_request_duration", return_value=4.125)
+    @patch.object(litellm.main.base_llm_http_handler, "audio_transcriptions")
+    def test_sync_transcription_always_records_request_duration(
+        self, mock_transcription, mock_duration
+    ):
+        provider_response = TranscriptionResponse(text="test")
+        provider_response.duration = 99.0  # type: ignore
+        mock_transcription.return_value = provider_response
+
+        response = litellm.transcription(
+            model="mistral/voxtral-mini-2602",
+            file=io.BytesIO(b"audio"),
+            api_key="test-key",
+        )
+
+        assert response.duration == 99.0
+        assert response._hidden_params["audio_transcription_duration"] == 4.125
+        mock_duration.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("litellm.main.calculate_request_duration", return_value=4.125)
+    @patch.object(litellm.main.base_llm_http_handler, "audio_transcriptions")
+    async def test_async_transcription_always_records_request_duration(
+        self, mock_transcription, mock_duration
+    ):
+        provider_response = TranscriptionResponse(text="test")
+        provider_response.duration = 99.0  # type: ignore
+        mock_transcription.return_value = provider_response
+
+        response = await litellm.atranscription(
+            model="mistral/voxtral-mini-2602",
+            file=io.BytesIO(b"audio"),
+            api_key="test-key",
+        )
+
+        assert response.duration == 99.0
+        assert response._hidden_params["audio_transcription_duration"] == 4.125
+        assert mock_duration.call_count >= 1
+
 
 class TestCostCalculatorReadsDurationFromHiddenParams:
     """The cost calculator should read duration from _hidden_params via completion_cost()."""
@@ -131,23 +174,17 @@ class TestCostCalculatorReadsDurationFromHiddenParams:
         _, kwargs = mock_cost_fn.call_args
         assert kwargs["duration"] == 42.7
 
-    @patch("litellm.cost_calculator.openai_cost_per_second")
-    def test_completion_cost_defaults_to_zero_duration(self, mock_cost_fn):
-        """When neither hidden params nor response has duration, use 0.0."""
-        mock_cost_fn.return_value = (0.0, 0.0)
-
+    def test_completion_cost_requires_duration_for_per_second_pricing(self):
+        """Per-second pricing must fail when request duration is unavailable."""
         response = TranscriptionResponse(text="test")
         response._hidden_params = {
             "model": "whisper-1",
             "custom_llm_provider": "openai",
         }
 
-        completion_cost(
-            completion_response=response,
-            model="whisper-1",
-            call_type="atranscription",
-        )
-
-        mock_cost_fn.assert_called_once()
-        _, kwargs = mock_cost_fn.call_args
-        assert kwargs["duration"] == 0.0
+        with pytest.raises(ValueError, match="duration"):
+            completion_cost(
+                completion_response=response,
+                model="whisper-1",
+                call_type="atranscription",
+            )

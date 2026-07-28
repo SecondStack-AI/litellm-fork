@@ -1,6 +1,8 @@
 import os
 import sys
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 sys.path.insert(
@@ -16,9 +18,16 @@ from litellm.cost_calculator import (
     handle_realtime_stream_cost_calculation,
     response_cost_calculator,
 )
+from litellm.llms.mistral.audio_transcription.transformation import (
+    MistralAudioTranscriptionConfig,
+)
 from litellm.types.llms.openai import OpenAIRealtimeStreamList
 from litellm.types.utils import ModelResponse, PromptTokensDetailsWrapper, Usage
-from litellm.utils import TranscriptionResponse
+from litellm.utils import (
+    TranscriptionResponse,
+    _cached_get_model_info_helper,
+    _invalidate_model_cost_lowercase_map,
+)
 
 
 def test_completion_cost_uses_response_model_for_dynamic_routing():
@@ -238,6 +247,196 @@ def test_transcription_cost_falls_back_to_duration():
 
     expected_cost = 10.0 * 0.0001
     assert pytest.approx(cost, rel=1e-6) == expected_cost
+
+
+@pytest.fixture
+def install_transcription_model_pricing(monkeypatch):
+    def install(model, model_info):
+        monkeypatch.setattr(
+            litellm,
+            "model_cost",
+            {
+                model: {
+                    "litellm_provider": model_info.get("litellm_provider", "mistral"),
+                    "mode": "audio_transcription",
+                    **model_info,
+                }
+            },
+        )
+        litellm.get_model_info.cache_clear()
+        _cached_get_model_info_helper.cache_clear()
+        _invalidate_model_cost_lowercase_map()
+
+    yield install
+    litellm.get_model_info.cache_clear()
+    _cached_get_model_info_helper.cache_clear()
+    _invalidate_model_cost_lowercase_map()
+
+
+def test_transcription_cost_uses_duration_pricing_for_mistral_token_usage(
+    install_transcription_model_pricing,
+):
+    model = "voxtral-mini-2602"
+    deployment_id = "voxtral-mini-2602-duration-priced-deployment"
+    install_transcription_model_pricing(
+        deployment_id,
+        {
+            "input_cost_per_second": 0.00005,
+            "input_cost_per_token": None,
+            "output_cost_per_token": None,
+        },
+    )
+
+    raw_response = MagicMock(spec=httpx.Response)
+    raw_response.json.return_value = {
+        "model": model,
+        "text": "Hello from Mistral.",
+        "language": "en",
+        "duration": 4.0,
+        "segments": [
+            {
+                "text": "Hello from Mistral.",
+                "start": 0.0,
+                "end": 4.0,
+                "speaker_id": "speaker_0",
+                "type": "transcription_segment",
+            }
+        ],
+        "usage": {
+            "prompt_audio_seconds": 4,
+            "prompt_tokens": 375,
+            "completion_tokens": 13,
+            "total_tokens": 388,
+            "prompt_tokens_details": {"audio_tokens": 375, "cached_tokens": 0},
+        },
+    }
+    response = MistralAudioTranscriptionConfig().transform_audio_transcription_response(
+        raw_response
+    )
+    response._hidden_params["audio_transcription_duration"] = 4.125
+
+    cost = completion_cost(
+        completion_response=response,
+        model=model,
+        custom_llm_provider="mistral",
+        call_type="atranscription",
+        custom_pricing=True,
+        router_model_id=deployment_id,
+    )
+
+    assert response["usage"]["total_tokens"] == 388
+    assert response._hidden_params["usage"]["total_tokens"] == 388
+    assert cost == pytest.approx(4.125 * 0.00005)
+
+
+def test_transcription_cost_uses_generic_token_pricing(
+    install_transcription_model_pricing,
+):
+    model = "custom-token-priced-transcription"
+    install_transcription_model_pricing(
+        model,
+        {
+            "litellm_provider": "openai",
+            "input_cost_per_token": 0.0000025,
+            "input_cost_per_audio_token": 0.000006,
+            "output_cost_per_token": 0.00001,
+        },
+    )
+    response = TranscriptionResponse(text="demo text")
+    response.usage = Usage(
+        prompt_tokens=14,
+        completion_tokens=45,
+        total_tokens=59,
+        prompt_tokens_details=PromptTokensDetailsWrapper(
+            text_tokens=0, audio_tokens=14
+        ),
+    )
+
+    cost = completion_cost(
+        completion_response=response,
+        model=model,
+        custom_llm_provider="openai",
+        call_type="atranscription",
+    )
+
+    assert cost == pytest.approx((14 * 0.000006) + (45 * 0.00001))
+
+
+def test_transcription_cost_requires_usage_for_token_pricing(
+    install_transcription_model_pricing,
+):
+    model = "custom-token-priced-transcription"
+    install_transcription_model_pricing(
+        model,
+        {
+            "litellm_provider": "openai",
+            "input_cost_per_token": 0.0000025,
+            "output_cost_per_token": 0.00001,
+        },
+    )
+
+    with pytest.raises(ValueError, match="Token usage is required"):
+        completion_cost(
+            completion_response=TranscriptionResponse(text="demo text"),
+            model=model,
+            custom_llm_provider="openai",
+            call_type="atranscription",
+        )
+
+
+def test_transcription_cost_accepts_explicit_zero_per_second_pricing(
+    install_transcription_model_pricing,
+):
+    model = "ci-mock-audio-transcription"
+    install_transcription_model_pricing(
+        model,
+        {
+            "input_cost_per_second": 0.0,
+            "input_cost_per_token": None,
+            "output_cost_per_token": None,
+        },
+    )
+    response = TranscriptionResponse(text="mock transcript")
+    response._hidden_params["audio_transcription_duration"] = 5.0
+
+    cost = completion_cost(
+        completion_response=response,
+        model=model,
+        custom_llm_provider="mistral",
+        call_type="atranscription",
+    )
+
+    assert cost == 0.0
+
+
+@pytest.mark.parametrize(
+    "pricing",
+    [
+        {
+            "input_cost_per_second": 0.00005,
+            "input_cost_per_token": 0.0000025,
+            "output_cost_per_token": 0.00001,
+        },
+        {"input_cost_per_token": None, "output_cost_per_token": None},
+    ],
+    ids=["mixed", "missing"],
+)
+def test_transcription_cost_rejects_ambiguous_pricing(
+    install_transcription_model_pricing, pricing
+):
+    model = "invalid-transcription-pricing"
+    install_transcription_model_pricing(model, pricing)
+    response = TranscriptionResponse(text="demo text")
+    response.usage = Usage(prompt_tokens=10, completion_tokens=2, total_tokens=12)
+    response._hidden_params["audio_transcription_duration"] = 5.0
+
+    with pytest.raises(ValueError, match="exactly one pricing family"):
+        completion_cost(
+            completion_response=response,
+            model=model,
+            custom_llm_provider="mistral",
+            call_type="atranscription",
+        )
 
 
 def test_handle_realtime_stream_cost_calculation():

@@ -257,6 +257,35 @@ def _transcription_usage_has_token_details(
     return (prompt_tokens_val > 0) or (completion_tokens_val > 0)
 
 
+def _transcription_pricing_family(model_info: ModelInfo) -> Literal["second", "token"]:
+    model_cost_key = model_info.get("key")
+    explicit_model_info = (
+        litellm.model_cost.get(model_cost_key)
+        if isinstance(model_cost_key, str)
+        else None
+    )
+    pricing_info = explicit_model_info or model_info
+    per_second_rates = (
+        pricing_info.get("input_cost_per_second"),
+        pricing_info.get("output_cost_per_second"),
+    )
+    per_token_rates = (
+        pricing_info.get("input_cost_per_token"),
+        pricing_info.get("input_cost_per_audio_token"),
+        pricing_info.get("output_cost_per_token"),
+        pricing_info.get("output_cost_per_audio_token"),
+    )
+    has_per_second_pricing = any(rate is not None for rate in per_second_rates)
+    has_token_pricing = any(rate is not None for rate in per_token_rates)
+
+    if has_per_second_pricing == has_token_pricing:
+        raise ValueError(
+            "Audio transcription models must define exactly one pricing family: "
+            "per-second or per-token pricing."
+        )
+    return "second" if has_per_second_pricing else "token"
+
+
 def cost_per_token(  # noqa: PLR0915
     model: str = "",
     prompt_tokens: int = 0,
@@ -450,17 +479,39 @@ def cost_per_token(  # noqa: PLR0915
             usage=usage_block, model=model, custom_llm_provider=custom_llm_provider
         )
     elif call_type == "atranscription" or call_type == "transcription":
-        if _transcription_usage_has_token_details(usage_block):
-            return openai_cost_per_token(
-                model=model_without_prefix,
-                usage=usage_block,
-                service_tier=service_tier,
-            )
-
-        return openai_cost_per_second(
+        transcription_model_info = litellm.get_model_info(
             model=model_without_prefix,
             custom_llm_provider=custom_llm_provider,
-            duration=audio_transcription_file_duration,
+        )
+        pricing_family = _transcription_pricing_family(transcription_model_info)
+        if pricing_family == "second":
+            if not isinstance(audio_transcription_file_duration, (int, float)):
+                raise ValueError(
+                    "audio_transcription_file_duration is required for per-second "
+                    "audio transcription pricing."
+                )
+            return openai_cost_per_second(
+                model=model_without_prefix,
+                custom_llm_provider=custom_llm_provider,
+                duration=audio_transcription_file_duration,
+            )
+
+        if not _transcription_usage_has_token_details(usage_block):
+            raise ValueError(
+                "Token usage is required for per-token audio transcription pricing."
+            )
+        token_pricing_provider = custom_llm_provider or transcription_model_info.get(
+            "litellm_provider"
+        )
+        if token_pricing_provider is None:
+            raise ValueError(
+                "custom_llm_provider is required for per-token audio transcription pricing."
+            )
+        return generic_cost_per_token(
+            model=model_without_prefix,
+            usage=usage_block,
+            custom_llm_provider=token_pricing_provider,
+            service_tier=service_tier,
         )
     elif call_type == "search" or call_type == "asearch":
         # Search providers use per-query pricing
