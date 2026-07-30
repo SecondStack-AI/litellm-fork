@@ -82,7 +82,7 @@ class TestTranscriptionDurationNotInResponseBody:
         assert duration is None
 
     @patch("litellm.main.calculate_request_duration", return_value=4.125)
-    @patch.object(litellm.main.base_llm_http_handler, "audio_transcriptions")
+    @patch.object(litellm.main.openai_audio_transcriptions, "audio_transcriptions")
     def test_sync_transcription_always_records_request_duration(
         self, mock_transcription, mock_duration
     ):
@@ -91,7 +91,7 @@ class TestTranscriptionDurationNotInResponseBody:
         mock_transcription.return_value = provider_response
 
         response = litellm.transcription(
-            model="mistral/voxtral-mini-2602",
+            model="openai/gpt-4o-transcribe-diarize",
             file=io.BytesIO(b"audio"),
             api_key="test-key",
         )
@@ -102,7 +102,9 @@ class TestTranscriptionDurationNotInResponseBody:
 
     @pytest.mark.asyncio
     @patch("litellm.main.calculate_request_duration", return_value=4.125)
-    @patch.object(litellm.main.base_llm_http_handler, "audio_transcriptions")
+    @patch.object(
+        litellm.main.openai_audio_transcriptions, "async_audio_transcriptions"
+    )
     async def test_async_transcription_always_records_request_duration(
         self, mock_transcription, mock_duration
     ):
@@ -111,7 +113,7 @@ class TestTranscriptionDurationNotInResponseBody:
         mock_transcription.return_value = provider_response
 
         response = await litellm.atranscription(
-            model="mistral/voxtral-mini-2602",
+            model="openai/gpt-4o-transcribe-diarize",
             file=io.BytesIO(b"audio"),
             api_key="test-key",
         )
