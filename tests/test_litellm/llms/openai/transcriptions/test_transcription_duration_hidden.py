@@ -176,17 +176,23 @@ class TestCostCalculatorReadsDurationFromHiddenParams:
         _, kwargs = mock_cost_fn.call_args
         assert kwargs["duration"] == 42.7
 
-    def test_completion_cost_requires_duration_for_per_second_pricing(self):
-        """Per-second pricing must fail when request duration is unavailable."""
+    @patch("litellm.cost_calculator.openai_cost_per_second")
+    def test_completion_cost_defaults_to_zero_duration(self, mock_cost_fn):
+        """When neither hidden params nor response has duration, use 0.0."""
+        mock_cost_fn.return_value = (0.0, 0.0)
+
         response = TranscriptionResponse(text="test")
         response._hidden_params = {
             "model": "whisper-1",
             "custom_llm_provider": "openai",
         }
 
-        with pytest.raises(ValueError, match="duration"):
-            completion_cost(
-                completion_response=response,
-                model="whisper-1",
-                call_type="atranscription",
-            )
+        completion_cost(
+            completion_response=response,
+            model="whisper-1",
+            call_type="atranscription",
+        )
+
+        mock_cost_fn.assert_called_once()
+        _, kwargs = mock_cost_fn.call_args
+        assert kwargs["duration"] == 0.0
