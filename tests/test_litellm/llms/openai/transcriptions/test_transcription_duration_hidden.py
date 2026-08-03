@@ -9,11 +9,80 @@ TranscriptionVerbose/Diarized type.
 
 from unittest.mock import patch
 
+import litellm
+import pytest
 from litellm.cost_calculator import completion_cost
 from litellm.litellm_core_utils.llm_response_utils.convert_dict_to_response import (
     convert_to_model_response_object,
 )
-from litellm.types.utils import TranscriptionResponse
+from litellm.types.utils import (
+    PromptTokensDetailsWrapper,
+    TranscriptionResponse,
+    Usage,
+)
+from litellm.utils import (
+    ProviderConfigManager,
+    _cached_get_model_info_helper,
+    _invalidate_model_cost_lowercase_map,
+)
+
+
+def test_gpt_transcribe_uses_gpt_transcription_transform():
+    config = ProviderConfigManager.get_provider_audio_transcription_config(
+        model="gpt-transcribe",
+        provider=litellm.LlmProviders.OPENAI,
+    )
+
+    assert isinstance(config, litellm.OpenAIGPTAudioTranscriptionConfig)
+    request = config.transform_audio_transcription_request(
+        model="gpt-transcribe",
+        audio_file=b"audio",
+        optional_params={"response_format": "json"},
+        litellm_params={},
+    )
+    assert request.data["response_format"] == "json"
+
+
+def test_per_second_pricing_wins_over_provider_token_usage(monkeypatch):
+    deployment_id = "openai-gpt-transcribe-duration-priced"
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            deployment_id: {
+                "litellm_provider": "openai",
+                "mode": "audio_transcription",
+                "input_cost_per_second": 0.000075,
+            }
+        },
+    )
+    litellm.get_model_info.cache_clear()
+    _cached_get_model_info_helper.cache_clear()
+    _invalidate_model_cost_lowercase_map()
+    response = TranscriptionResponse(text="plain transcript")
+    response.usage = Usage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        prompt_tokens_details=PromptTokensDetailsWrapper(audio_tokens=100),
+    )
+    response._hidden_params["audio_transcription_duration"] = 10.0
+
+    try:
+        cost = completion_cost(
+            completion_response=response,
+            model="gpt-transcribe",
+            custom_llm_provider="openai",
+            call_type="atranscription",
+            custom_pricing=True,
+            router_model_id=deployment_id,
+        )
+    finally:
+        litellm.get_model_info.cache_clear()
+        _cached_get_model_info_helper.cache_clear()
+        _invalidate_model_cost_lowercase_map()
+
+    assert cost == pytest.approx(10.0 * 0.000075)
 
 
 class TestTranscriptionDurationNotInResponseBody:

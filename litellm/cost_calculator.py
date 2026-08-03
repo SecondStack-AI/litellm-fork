@@ -450,6 +450,37 @@ def cost_per_token(  # noqa: PLR0915
             usage=usage_block, model=model, custom_llm_provider=custom_llm_provider
         )
     elif call_type == "atranscription" or call_type == "transcription":
+        transcription_model_info = litellm.get_model_info(
+            model=model_without_prefix,
+            custom_llm_provider=custom_llm_provider,
+        )
+        model_cost_key = transcription_model_info.get("key")
+        explicit_pricing = (
+            litellm.model_cost.get(model_cost_key)
+            if isinstance(model_cost_key, str)
+            else None
+        )
+        pricing_info = explicit_pricing or transcription_model_info
+        has_per_second_pricing = any(
+            pricing_info.get(key) is not None
+            for key in ("input_cost_per_second", "output_cost_per_second")
+        )
+        has_per_token_pricing = any(
+            pricing_info.get(key) is not None
+            for key in (
+                "input_cost_per_token",
+                "input_cost_per_audio_token",
+                "output_cost_per_token",
+                "output_cost_per_audio_token",
+            )
+        )
+        if has_per_second_pricing and not has_per_token_pricing:
+            return openai_cost_per_second(
+                model=model_without_prefix,
+                custom_llm_provider=custom_llm_provider,
+                duration=audio_transcription_file_duration,
+            )
+
         if _transcription_usage_has_token_details(usage_block):
             return openai_cost_per_token(
                 model=model_without_prefix,
